@@ -1305,7 +1305,10 @@ const MUSIC=[
   {f:'music/song05.mp3', t:'英雄联盟 - 所向无前 (Take Over)'},
   {f:'music/song06.mp3', t:'英雄联盟、Against The Current - Legends Never Die'},
 ];
-let musicState={idx:0,on:false};
+const BGM_CDN='https://cdn.jsdelivr.net/gh/L657580/bgm-store@main/';
+const BGM_RAW='https://raw.githubusercontent.com/L657580/bgm-store/main/';
+MUSIC.forEach(m=>{ const n=m.f.split('/').pop(); m.urls=[m.f, BGM_CDN+n, BGM_RAW+n]; });
+let musicState={idx:0,on:false}, musicCur=-1, musicTry=0;
 try{
   const ms=JSON.parse(localStorage.getItem('tgtop_music_v1'));
   if(ms && typeof ms.idx==='number' && ms.idx>=0 && ms.idx<MUSIC.length){ musicState.idx=ms.idx; musicState.on=!!ms.on; }
@@ -1321,17 +1324,17 @@ function hideMusicUI(){
 function probeMusic(order){
   if(musicProbeDone) return;
   if(!order.length){ musicProbeDone=true; if(musicDead.size>=MUSIC.length) hideMusicUI(); return; }
-  const i=order[0];
-  const probe=new Audio();
-  let settled=false;
-  const done=(ok)=>{ if(settled) return; settled=true;
-    if(!ok) musicDead.add(i);
-    probeMusic(order.slice(1));
+  const i=order[0], m=MUSIC[i];
+  let settled=false, ti=0;
+  const tryNext=()=>{
+    if(settled) return;
+    if(ti>=m.urls.length){ settled=true; musicDead.add(i); probeMusic(order.slice(1)); return; }
+    const probe=new Audio(); probe.preload='metadata';
+    probe.addEventListener('loadedmetadata',()=>{ if(settled) return; settled=true; probeMusic(order.slice(1)); },{once:true});
+    probe.addEventListener('error',()=>{ ti++; tryNext(); },{once:true});
+    probe.src=m.urls[ti];
   };
-  probe.preload='metadata';
-  probe.addEventListener('loadedmetadata',()=>done(true),{once:true});
-  probe.addEventListener('error',()=>done(false),{once:true});
-  probe.src=MUSIC[i].f;
+  tryNext();
 }
 
 function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
@@ -1343,11 +1346,14 @@ function muRender(){
   $('#mu-toggle').classList.toggle('on', playing);
   $('#btn-music').classList.toggle('on', playing);
 }
-function muLoad(i){ musicAudio.src = MUSIC[i].f; }
+function muLoad(i, tryIdx){
+  musicCur=i; musicTry=tryIdx||0;
+  musicAudio.src=MUSIC[i].urls[musicTry];
+}
 function muPlay(){
   if(musicDead.size>=MUSIC.length) return;
   musicState.on=true; muSave();
-  if(!musicAudio.src || musicAudio.src.indexOf(MUSIC[musicState.idx].f)<0) muLoad(musicState.idx);
+  if(musicCur!==musicState.idx || musicTry!==0 || !musicAudio.src) muLoad(musicState.idx, 0);
   const p=musicAudio.play();
   if(p && p.catch) p.catch(()=>{ });
   muRender();
@@ -1358,11 +1364,19 @@ function muSwitch(d){
   if(musicDead.size>=MUSIC.length) return;
   let n=musicState.idx;
   for(let k=0;k<MUSIC.length;k++){ n=(n+d+MUSIC.length)%MUSIC.length; if(!musicDead.has(n)) break; }
-  musicState.idx=n; muSave(); muLoad(n);
+  musicState.idx=n; muSave(); muLoad(n, 0);
   if(musicState.on) muPlay(); else muRender();
 }
 musicAudio.addEventListener('error',()=>{
-  musicDead.add(musicState.idx); muRender();
+  if(musicCur<0) return;
+  const m=MUSIC[musicCur];
+  if(musicTry < m.urls.length-1){
+    musicTry++;                                     // 本地失败 → CDN → raw 逐级兜底
+    musicAudio.src=m.urls[musicTry];
+    if(musicState.on){ const p=musicAudio.play(); if(p&&p.catch)p.catch(()=>{ }); }
+    return;
+  }
+  musicDead.add(musicCur); muRender();
   if(musicDead.size>=MUSIC.length){ hideMusicUI(); return; }
   muSwitch(1);
 });
