@@ -289,7 +289,7 @@
       <div id="music-picker">
         <span class="mp-label">音乐</span>
         <div id="mu-box">
-          <div id="mu-title" role="button" aria-label="展开曲目列表">--<svg viewBox="0 0 24 24" class="mu-chev"><path d="M6 9l6 6 6-6"/></svg></div>
+          <div id="mu-title" role="button" aria-label="展开曲目列表"><span class="t">--</span><svg viewBox="0 0 24 24" class="mu-chev"><path d="M6 9l6 6 6-6"/></svg></div>
           <div id="mu-list"></div>
         </div>
         <button class="mp-btn" id="mu-toggle" aria-label="播放/暂停">▶</button>
@@ -1345,6 +1345,7 @@ try{
 }catch(_){ }
 const musicAudio=new Audio(); musicAudio.loop=true; musicAudio.volume=0.55; musicAudio.preload='none';
 const musicDead=new Set(); let musicProbeDone=false;
+const musicOkUrl={}; // probeMusic 探测到的每首歌可用源序号
 
 function hideMusicUI(){
   const p=$('#music-picker'), b=$('#btn-music');
@@ -1352,20 +1353,30 @@ function hideMusicUI(){
   if(b) b.style.display='none';
   const box=$('#mu-box'); if(box) box.classList.remove('open');
 }
-function probeMusic(order){
+function probeMusic(){
   if(musicProbeDone) return;
-  if(!order.length){ musicProbeDone=true; if(musicDead.size>=MUSIC.length) hideMusicUI(); return; }
-  const i=order[0], m=MUSIC[i];
-  let settled=false, ti=0;
-  const tryNext=()=>{
-    if(settled) return;
-    if(ti>=m.urls.length){ settled=true; musicDead.add(i); probeMusic(order.slice(1)); return; }
-    const probe=new Audio(); probe.preload='metadata';
-    probe.addEventListener('loadedmetadata',()=>{ if(settled) return; settled=true; probeMusic(order.slice(1)); },{once:true});
-    probe.addEventListener('error',()=>{ ti++; tryNext(); },{once:true});
-    probe.src=m.urls[ti];
+  let pending=MUSIC.length;
+  const settleOne=(ok,i)=>{
+    if(!ok) musicDead.add(i);
+    if(--pending>0) return;
+    musicProbeDone=true;
+    if(musicDead.size>=MUSIC.length) hideMusicUI();
+    else muRender();
   };
-  tryNext();
+  MUSIC.forEach((m,i)=>{
+    let ti=0, settled=false, timer=null;
+    const tryNext=()=>{
+      if(settled) return;
+      if(ti>=m.urls.length){ settled=true; clearTimeout(timer); settleOne(false,i); return; }
+      clearTimeout(timer);
+      timer=setTimeout(()=>{ if(settled) return; settled=true; settleOne(false,i); }, 9000);
+      const probe=new Audio(); probe.preload='metadata';
+      probe.addEventListener('loadedmetadata',()=>{ if(settled) return; settled=true; clearTimeout(timer); musicOkUrl[i]=ti; settleOne(true,i); },{once:true});
+      probe.addEventListener('error',()=>{ if(settled) return; ti++; tryNext(); },{once:true});
+      probe.src=m.urls[ti];
+    };
+    tryNext();
+  });
 }
 
 function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
@@ -1390,6 +1401,7 @@ function muBuildList(){
     d.innerHTML=`<span class="idx-num">${i+1}</span><span class="n">${m.t}</span>`;
     d.addEventListener('click',()=>{
       if(i===musicState.idx && muIsPlaying()){ muPause(); muCollapse(); return; }
+      musicDead.delete(i); // 点选即重试：探测/播放失败可能是暂时性网络问题
       musicState.idx=i; muSave(); muPlay();
       muCollapse();
     });
@@ -1408,13 +1420,33 @@ document.addEventListener('click',e=>{
   if(box && box.classList.contains('open') && !box.contains(e.target)) muCollapse();
 });
 function muLoad(i, tryIdx){
-  musicCur=i; musicTry=tryIdx||0;
+  musicCur=i;
+  // 优先使用探测到的可用源，否则从指定序号（默认本地源）起，失败由 error 盙听逐级切换
+  const start=(typeof musicOkUrl[i]==='number') ? musicOkUrl[i] : (tryIdx||0);
+  musicTry=start;
   musicAudio.src=MUSIC[i].urls[musicTry];
 }
+/* 播放中源失效（如手机访问公网时本地源 404）：自动切下一可用源，全部失败则标记 dead */
+musicAudio.addEventListener('error',()=>{
+  const m=MUSIC[musicCur];
+  if(!m || !musicAudio.src) return;
+  musicTry++;
+  if(musicTry>=m.urls.length){
+    musicDead.add(musicCur);
+    if(musicState.on){ muPause(); }
+    muRender();
+    return;
+  }
+  const wasOn=musicState.on;
+  musicOkUrl[musicCur]=musicTry; // 换源成功后更新缓存，暂停/恢复不再回退到坏源
+  musicAudio.src=m.urls[musicTry];
+  if(wasOn) musicAudio.play().catch(()=>{ });
+});
 function muPlay(){
   if(musicDead.size>=MUSIC.length) return;
   musicState.on=true; muSave();
-  if(musicCur!==musicState.idx || musicTry!==0 || !musicAudio.src) muLoad(musicState.idx, 0);
+  const want=(typeof musicOkUrl[musicState.idx]==='number') ? musicOkUrl[musicState.idx] : 0;
+  if(musicCur!==musicState.idx || musicTry!==want || !musicAudio.src) muLoad(musicState.idx, 0);
   const p=musicAudio.play();
   if(p && p.catch) p.catch(()=>{ });
   muRender();
@@ -1454,9 +1486,7 @@ function updateHistLine(){
 function boot(){
   buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites();
   muBuildList(); muRender();
-  const muOrder=[musicState.idx];
-  for(let k=1;k<MUSIC.length;k++) muOrder.push((musicState.idx+k)%MUSIC.length);
-  probeMusic(muOrder);
+  probeMusic();
   logoImgs.forEach(im=>{
     const rebuild=()=>{ lastW=0; layout(); };
     im.addEventListener('load',rebuild); im.addEventListener('error',rebuild);
@@ -1497,7 +1527,7 @@ window.__game={
   champ:()=>champion?TEAMS[tops.indexOf(champion)].id:null,
   geo:()=>({cx:arena.cx,cy:arena.cy,R:arena.R,topR:arena.topR,K:ARENA_K}),
   collisions:()=>colCount,
-  music:()=>({idx:musicState.idx,on:musicState.on,dead:musicDead.size,title:MUSIC[musicState.idx].t,playing:muIsPlaying(),src:(musicAudio.src||'').split('/').pop()}),
+  music:()=>({idx:musicState.idx,on:musicState.on,dead:musicDead.size,title:MUSIC[musicState.idx].t,playing:muIsPlaying(),src:(musicAudio.src||'').split('/').pop(),srcFull:(musicAudio.src||'')}),
   whip:(i,kind='perfect')=>applyWhip(i,kind==='perfect'?{kind:'perfect',gain:66}:kind==='good'?{kind:'good',gain:26}:kind==='wrong'?{kind:'wrong',gain:4}:{kind:'weak',gain:9}),
   finishWhips:()=>{ let guard=0; while(totalWhips<MAX_WHIPS && state==='whipping' && guard++<60){ const alive=tops.findIndex(t=>!t.fallen); applyWhip(alive<0?0:alive,{kind:'perfect',gain:60}); } },
   setRpm:(i,v)=>{ if(tops[i]) tops[i].rpm=v; },
