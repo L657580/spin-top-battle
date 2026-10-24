@@ -138,6 +138,22 @@
   .so-sub{margin-top:16px;font-size:12px;color:var(--ink-dim);letter-spacing:.12em}
   .so-stats{margin-top:8px;font-size:11px;color:#6f7689;letter-spacing:.05em}
 
+  /* 音乐选择器 */
+  #music-picker{
+    display:flex;align-items:center;gap:8px;margin:0 0 22px;
+    background:rgba(10,12,19,.66);border:1px solid rgba(255,255,255,.14);
+    border-radius:999px;padding:7px 12px;max-width:94%;
+  }
+  .mp-label{font-size:11px;color:var(--gold-2);letter-spacing:.25em;font-weight:700;flex:0 0 auto}
+  .mp-btn{width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);
+    color:#e8eaf2;cursor:pointer;font-size:12px;line-height:1;flex:0 0 auto;transition:.15s}
+  .mp-btn:hover{border-color:rgba(245,196,83,.6);color:var(--gold-2)}
+  #mu-title{font-size:12px;color:#d6dbe8;min-width:140px;max-width:200px;text-align:center;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mu-title.dead{color:#6f7689}
+  .mp-btn.on{color:var(--gold-2);border-color:rgba(245,196,83,.6)}
+  #btn-music.on{color:var(--gold-2);border-color:rgba(245,196,83,.6)}
+
   /* ===== 右下统计面板 ===== */
   #stats-panel{
     position:relative;z-index:30;width:min(62%,252px);margin:4px 12px calc(env(safe-area-inset-bottom,0px) + 10px) auto;
@@ -228,6 +244,7 @@
       <svg viewBox="0 0 24 24"><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/></svg>
     </button>
     <h1 id="game-title" class="callig">抽陀螺</h1>
+    <button class="tb-btn" id="btn-music" aria-label="音乐开关" title="音乐开关">♪</button>
     <button class="tb-btn" id="btn-help" aria-label="玩法说明" title="玩法说明">?</button>
   </header>
   <div id="hint">按住拖动挥鞭 · <b>顺着陀螺转的方向抽</b>，转速涨得最多</div>
@@ -240,6 +257,13 @@
     <div id="start-overlay">
       <div class="so-title">抽陀螺</div>
       <div class="so-logos" id="so-logos"></div>
+      <div id="music-picker">
+        <span class="mp-label">音乐</span>
+        <button class="mp-btn" id="mu-prev" aria-label="上一首">◀</button>
+        <div id="mu-title">--</div>
+        <button class="mp-btn" id="mu-next" aria-label="下一首">▶</button>
+        <button class="mp-btn" id="mu-toggle" aria-label="播放/暂停">▶</button>
+      </div>
       <button id="btn-start">开 始</button>
       <div class="so-sub">60 鞭定胜负 · 转到最后的是冠军</div>
       <div class="so-stats" id="so-stats"></div>
@@ -1272,8 +1296,64 @@ function frame(now){
   render(now);
 }
 
+/* ================= 背景音乐 ================= */
+const MUSIC=[
+  {f:'music/song01.mp3', t:'NewJeans - GODS'},
+  {f:'music/song02.mp3', t:'Riot Games、Wes Borland - Hybrid Worlds'},
+  {f:'music/song03.mp3', t:'The Glitch Mob、Mako、The Word Alive - RISE'},
+  {f:'music/song04.mp3', t:'英雄联盟 - 涅槃 (Phoenix)'},
+  {f:'music/song05.mp3', t:'英雄联盟 - 所向无前 (Take Over)'},
+  {f:'music/song06.mp3', t:'英雄联盟、Against The Current - Legends Never Die'},
+];
+let musicState={idx:0,on:false};
+try{
+  const ms=JSON.parse(localStorage.getItem('tgtop_music_v1'));
+  if(ms && typeof ms.idx==='number' && ms.idx>=0 && ms.idx<MUSIC.length){ musicState.idx=ms.idx; musicState.on=!!ms.on; }
+}catch(_){ }
+const musicAudio=new Audio(); musicAudio.loop=true; musicAudio.volume=0.55; musicAudio.preload='none';
+const musicDead=new Set(); let musicNoticeShown=false;
+
+function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
+function muIsPlaying(){ return musicState.on && !musicAudio.paused && !musicAudio.ended; }
+function muRender(){
+  const m=MUSIC[musicState.idx], tEl=$('#mu-title'), playing=muIsPlaying();
+  tEl.textContent=(musicDead.has(musicState.idx)?'[文件缺失] ':'')+m.t;
+  tEl.classList.toggle('dead', musicDead.has(musicState.idx));
+  $('#mu-toggle').textContent = playing ? '❚❚' : '▶';
+  $('#mu-toggle').classList.toggle('on', playing);
+  $('#btn-music').classList.toggle('on', playing);
+}
+function muLoad(i){ musicAudio.src = MUSIC[i].f; }
+function muPlay(){
+  musicState.on=true; muSave();
+  if(!musicAudio.src || musicAudio.src.indexOf(MUSIC[musicState.idx].f)<0) muLoad(musicState.idx);
+  const p=musicAudio.play();
+  if(p && p.catch) p.catch(()=>{ });
+  muRender();
+}
+function muPause(){ musicState.on=false; muSave(); musicAudio.pause(); muRender(); }
+function muToggle(){ muIsPlaying() ? muPause() : muPlay(); }
+function muSwitch(d){
+  if(musicDead.size>=MUSIC.length) return;
+  let n=musicState.idx;
+  for(let k=0;k<MUSIC.length;k++){ n=(n+d+MUSIC.length)%MUSIC.length; if(!musicDead.has(n)) break; }
+  musicState.idx=n; muSave(); muLoad(n);
+  if(musicState.on) muPlay(); else muRender();
+}
+musicAudio.addEventListener('error',()=>{
+  musicDead.add(musicState.idx); muRender();
+  if(musicDead.size>=MUSIC.length){
+    $('#mu-title').textContent='未找到音乐文件';
+    if(!musicNoticeShown){ musicNoticeShown=true; toast('音乐文件未随网页发布，仅本地版提供'); }
+    return;
+  }
+  muSwitch(1);
+});
+musicAudio.addEventListener('playing',muRender);
+musicAudio.addEventListener('pause',muRender);
+
 /* ================= 按钮 ================= */
-$('#btn-start').addEventListener('click',()=>{ if(state==='ready') startWhipping(); });
+$('#btn-start').addEventListener('click',()=>{ if(state==='ready'){ startWhipping(); if(musicState.on) muPlay(); } });
 $('#btn-again').addEventListener('click',()=>{ resetRound(); startWhipping('新的一局，抽起来！'); });
 function goHome(){
   clearTimeout(settleTimer);
@@ -1284,6 +1364,10 @@ function goHome(){
 }
 $('#btn-home').addEventListener('click',goHome);
 $('#btn-home2').addEventListener('click',goHome);
+$('#btn-music').addEventListener('click',muToggle);
+$('#mu-prev').addEventListener('click',()=>muSwitch(-1));
+$('#mu-next').addEventListener('click',()=>muSwitch(1));
+$('#mu-toggle').addEventListener('click',muToggle);
 $('#btn-help').addEventListener('click',()=>$('#modal-help').classList.remove('hidden'));
 $('#btn-help-close').addEventListener('click',()=>$('#modal-help').classList.add('hidden'));
 $('#modal-help').addEventListener('click',e=>{ if(e.target.id==='modal-help') $('#modal-help').classList.add('hidden'); });
@@ -1301,7 +1385,7 @@ function updateHistLine(){
   }
 }
 function boot(){
-  buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites();
+  buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites(); muRender();
   logoImgs.forEach(im=>{
     const rebuild=()=>{ lastW=0; layout(); };
     im.addEventListener('load',rebuild); im.addEventListener('error',rebuild);
@@ -1342,6 +1426,7 @@ window.__game={
   champ:()=>champion?TEAMS[tops.indexOf(champion)].id:null,
   geo:()=>({cx:arena.cx,cy:arena.cy,R:arena.R,topR:arena.topR,K:ARENA_K}),
   collisions:()=>colCount,
+  music:()=>({idx:musicState.idx,on:musicState.on,dead:musicDead.size,title:MUSIC[musicState.idx].t,playing:muIsPlaying(),src:(musicAudio.src||'').split('/').pop()}),
   whip:(i,kind='perfect')=>applyWhip(i,kind==='perfect'?{kind:'perfect',gain:66}:kind==='good'?{kind:'good',gain:26}:kind==='wrong'?{kind:'wrong',gain:4}:{kind:'weak',gain:9}),
   finishWhips:()=>{ let guard=0; while(totalWhips<MAX_WHIPS && state==='whipping' && guard++<60){ const alive=tops.findIndex(t=>!t.fallen); applyWhip(alive<0?0:alive,{kind:'perfect',gain:60}); } },
   setRpm:(i,v)=>{ if(tops[i]) tops[i].rpm=v; },
