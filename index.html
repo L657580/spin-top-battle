@@ -331,7 +331,7 @@ let tops = [], whipCounts = [0,0,0,0], totalWhips = 0;
 let fallCounter = 0, champion = null, settleTimer = null;
 let arena = { cx:0, cy:0, R:0, topR:0 };
 let lastDt = 1/60, lastColMsg = 0, colCount = 0;
-let fallLines = [];
+let motes = [], moteSprites = [];
 
 /* ================= 画布与离屏渲染 ================= */
 const cv = $('#cv'), ctx = cv.getContext('2d');
@@ -348,6 +348,26 @@ function buildCore(){
   rg.addColorStop(1,'rgba(255,220,150,0)');
   g.fillStyle=rg; g.fillRect(0,0,s,s);
   coreCanvas = c;
+}
+
+/* 上升光尘贴图（青 / 金 / 紫） */
+function buildMoteSprites(){
+  const cols=[
+    ['#d8fbff','#3fc3dd'],
+    ['#ffedc2','#eeae4e'],
+    ['#ead9ff','#a678ff'],
+  ];
+  moteSprites = cols.map(([inner,outer])=>{
+    const s=64, c=document.createElement('canvas'); c.width=c.height=s;
+    const g=c.getContext('2d');
+    const rg=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+    rg.addColorStop(0,'rgba(255,255,255,.95)');
+    rg.addColorStop(.28,hexA(inner,.75));
+    rg.addColorStop(.6,hexA(outer,.35));
+    rg.addColorStop(1,hexA(outer,0));
+    g.fillStyle=rg; g.fillRect(0,0,s,s);
+    return c;
+  });
 }
 
 /* 陀螺顶面纹理（圆形，随转速旋转） */
@@ -416,61 +436,83 @@ function buildGloss(R){
   glossCanvas=c;
 }
 
-/* 背景：暗色聚光 + 暗彩光斑 + 光点 + 下落线条 + 悬浮装饰环带 */
+/* 背景：深空聚光 + 极光雾 + 赛博透视网格地面 + 体积光束 + 星点 + 上升光尘 */
 function buildBackground(w,h){
   bgCanvas = document.createElement('canvas'); bgCanvas.width=Math.round(w*DPR); bgCanvas.height=Math.round(h*DPR);
   const g=bgCanvas.getContext('2d'); g.scale(DPR,DPR);
-  const cx=arena.cx, cy=arena.cy, R=arena.R;
-  let rg = g.createRadialGradient(cx,cy,R*0.55,cx,cy,Math.max(w,h)*0.8);
-  rg.addColorStop(0,'#17171a'); rg.addColorStop(.4,'#0c0c0e'); rg.addColorStop(1,'#020203');
+  const cx=arena.cx, cy=arena.cy, R=arena.R, K=ARENA_K;
+  // 深空底色（冷紫调）
+  let rg = g.createRadialGradient(cx,cy+R*0.35,R*0.5,cx,cy,Math.max(w,h)*0.85);
+  rg.addColorStop(0,'#15151d'); rg.addColorStop(.35,'#0a0a11'); rg.addColorStop(.7,'#050508'); rg.addColorStop(1,'#020203');
   g.fillStyle=rg; g.fillRect(0,0,w,h);
+  // 极光雾带（斜向大笔触）
+  const aurora=(x,y,wd,ht,ang,col)=>{
+    g.save(); g.translate(x,y); g.rotate(ang);
+    const lg=g.createLinearGradient(0,-ht/2,0,ht/2);
+    lg.addColorStop(0,'rgba(0,0,0,0)'); lg.addColorStop(.5,col); lg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=lg; g.fillRect(-wd/2,-ht/2,wd,ht);
+    g.restore();
+  };
+  aurora(cx-R*0.3, h*0.15, w*1.6, h*0.15, -0.34, 'rgba(64,120,230,.08)');
+  aurora(cx+R*0.4, h*0.09, w*1.4, h*0.11, 0.24, 'rgba(52,190,205,.06)');
+  aurora(cx-R*0.1, h*0.82, w*1.6, h*0.13, 0.31, 'rgba(150,80,220,.055)');
+  // 角落深色补光斑
   const blob=(x,y,rr,col)=>{
     const b=g.createRadialGradient(x,y,0,x,y,rr);
     b.addColorStop(0,col); b.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=b; g.beginPath(); g.arc(x,y,rr,0,7); g.fill();
   };
-  blob(w*0.16,h*0.10,Math.max(w,h)*0.34,'rgba(28,82,92,.12)');
-  blob(w*0.86,h*0.08,Math.max(w,h)*0.30,'rgba(118,42,46,.10)');
-  blob(w*0.80,h*0.92,Math.max(w,h)*0.34,'rgba(138,80,38,.09)');
-  blob(w*0.10,h*0.90,Math.max(w,h)*0.28,'rgba(60,44,96,.09)');
+  blob(w*0.13,h*0.11,Math.max(w,h)*0.32,'rgba(40,95,115,.10)');
+  blob(w*0.88,h*0.09,Math.max(w,h)*0.30,'rgba(110,50,60,.08)');
+  blob(w*0.82,h*0.94,Math.max(w,h)*0.34,'rgba(125,85,45,.07)');
+  // 赛博透视网格地面（擂台外围：同心椭圆 + 放射线）
+  [1.12,1.26,1.44,1.66,1.92].forEach((f,k)=>{
+    g.strokeStyle = k===1?'rgba(70,175,205,.15)':'rgba(70,175,205,.09)';
+    g.lineWidth = 1;
+    g.beginPath(); g.ellipse(cx,cy,R*f,R*f*K,0,0,Math.PI*2); g.stroke();
+  });
+  for(let i=0;i<18;i++){
+    const a=i/18*Math.PI*2;
+    const r1=R*1.06, r2=R*1.96;
+    g.strokeStyle= i%3===0 ? 'rgba(70,175,205,.10)' : 'rgba(70,175,205,.05)';
+    g.beginPath();
+    g.moveTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1*K);
+    g.lineTo(cx+Math.cos(a)*r2, cy+Math.sin(a)*r2*K);
+    g.stroke();
+  }
+  // 远端地平线光晕（擂台后方淡青光带）
+  const hz=g.createLinearGradient(0,cy-R*1.55,0,cy-R*0.95);
+  hz.addColorStop(0,'rgba(70,190,210,0)'); hz.addColorStop(.5,'rgba(70,190,210,.06)'); hz.addColorStop(1,'rgba(70,190,210,0)');
+  g.fillStyle=hz; g.fillRect(0,cy-R*1.55,w,R*0.6);
+  // 体积光束（顶部斜射两束）
+  const beam=(x0,w0,x1,w1,a)=>{
+    const lg=g.createLinearGradient(0,0,0,h);
+    lg.addColorStop(0,`rgba(170,190,255,${a})`); lg.addColorStop(.55,`rgba(150,170,240,${a*0.35})`); lg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=lg;
+    g.beginPath();
+    g.moveTo(x0-w0/2,0); g.lineTo(x0+w0/2,0);
+    g.lineTo(x1+w1/2,h); g.lineTo(x1-w1/2,h);
+    g.closePath(); g.fill();
+  };
+  beam(cx-R*0.55,R*0.16,cx-R*0.12,R*0.62,0.055);
+  beam(cx+R*0.72,R*0.10,cx+R*0.30,R*0.52,0.045);
+  // 静态星点
   const rng = mulberry32(20261024);
-  for(let i=0;i<Math.floor(w*h/4800);i++){
+  for(let i=0;i<Math.floor(w*h/4600);i++){
     const x=rng()*w, y=rng()*h, rr=rng()*1.2+0.3;
-    const d=Math.hypot(x-cx,y-cy)/R;
-    const a=(rng()*0.3+0.05)*clamp(1.3-d*0.4,0.15,1);
-    g.fillStyle = rng()<0.2 ? `rgba(255,205,150,${a})` : `rgba(214,220,240,${a})`;
+    const a=(rng()*0.3+0.05);
+    g.fillStyle = rng()<0.22 ? `rgba(255,205,150,${a})` : `rgba(210,218,240,${a})`;
     g.beginPath(); g.arc(x,y,rr,0,7); g.fill();
   }
-  fallLines=[];
-  for(let i=0;i<42;i++){
-    fallLines.push({x:rng()*w, y:rng()*h, len:4+rng()*11, sp:16+rng()*36, a:0.05+rng()*0.13});
+  // 上升光尘（动态）
+  motes=[];
+  for(let i=0;i<24;i++){
+    motes.push({
+      x:rng()*w, y:rng()*h, vy:14+rng()*30, sway:10+rng()*22,
+      ph:rng()*6.28, sp:0.5+rng()*1.1, s:1.6+rng()*2.6,
+      c: rng()<0.45?0:(rng()<0.55?1:2)
+    });
   }
-  // 悬浮装饰环带（比擂台稍大的椭圆环，前弧被擂台自然遮挡）
-  const rx=R*1.04, ry=rx*ARENA_K, cyb=cy - R*ARENA_K - ry - R*0.03;
-  g.save(); g.translate(cx,cyb);
-  g.strokeStyle='rgba(5,6,10,.5)'; g.lineWidth=R*0.06;
-  g.beginPath(); g.ellipse(0,0,rx,ry,0,0,Math.PI*2); g.stroke();
-  g.strokeStyle='rgba(255,255,255,.12)'; g.lineWidth=1;
-  g.beginPath(); g.ellipse(0,0,rx+R*0.032,ry+R*0.032*ARENA_K,0,0,Math.PI*2); g.stroke();
-  g.beginPath(); g.ellipse(0,0,rx-R*0.032,ry-R*0.032*ARENA_K,0,0,Math.PI*2); g.stroke();
-  for(let i=0;i<30;i++){
-    const a=rng()*Math.PI*2;
-    g.fillStyle=`rgba(230,235,250,${0.12+rng()*0.2})`;
-    g.beginPath(); g.arc(Math.cos(a)*rx, Math.sin(a)*ry, 0.9,0,7); g.fill();
-  }
-  g.restore();
-  g.save(); g.globalAlpha=0.6; g.fillStyle='#e04748';
-  g.font=`700 ${Math.max(11,R*0.07)}px "KaiTi","STKaiti",serif`; g.textAlign='center';
-  g.fillText('抽 醒 为 止', cx, cyb - ry*0.42);
-  g.restore();
-  const angList=[Math.PI*1.05, Math.PI*1.3, Math.PI*1.7, Math.PI*1.95];
-  TEAMS.forEach((t,k)=>{
-    const a=angList[k];
-    const x=cx+Math.cos(a)*rx, y=cyb+Math.sin(a)*ry;
-    g.save(); g.globalAlpha=0.75;
-    drawLogoFit(g, logoImgs[t.idx], x, y, R*0.085, R*0.06);
-    g.restore();
-  });
 }
 
 /* 擂台：斜俯视椭圆 + 厚度侧壁 + 金沿青环白环 + 透视水印 + 红印 */
@@ -709,14 +751,33 @@ function updateCounter(i){
 
 function updateLabelPositions(){
   const W=cv.clientWidth||0;
+  const pos=[];
   for(let i=0;i<tops.length;i++){
     const tp=tops[i], el=TEAMS[i].labelEl;
     const sx=w2sx(tp.x);
     const sy=w2sy(tp.y) - arena.topR*(ARENA_K+H_CYL_F) - 12;
     const lx = W? clamp(sx, 78, W-78) : sx;
     const ly = Math.max(50, sy);
-    el.style.transform = `translate3d(${lx}px,${ly}px,0) translate(-50%,-100%)`;
+    pos.push({lx, ly, el});
   }
+  // 标签防重叠：靠近时横向推开（两轮迭代处理链式遮挡）
+  for(let pass=0;pass<2;pass++){
+    for(let a=0;a<pos.length;a++){
+      for(let b=a+1;b<pos.length;b++){
+        const dx=pos[b].lx-pos[a].lx, dy=pos[b].ly-pos[a].ly;
+        if(Math.abs(dx)<128 && Math.abs(dy)<64){
+          const push=(128-Math.abs(dx))/2+4;
+          const dir=dx>=0?1:-1;
+          pos[a].lx-=push*dir; pos[b].lx+=push*dir;
+        }
+      }
+    }
+  }
+  pos.forEach(p=>{
+    const lx = W? clamp(p.lx, 60, W-60) : p.lx;
+    p.el.style.transform = `translate3d(${lx}px,${p.ly}px,0) translate(-50%,-100%)`;
+    p.el.style.zIndex = Math.round(p.ly);
+  });
 }
 
 /* ================= 挥鞭判定 ================= */
@@ -997,7 +1058,11 @@ function update(dt, nowMs){
     if(nowMs-trails[i].born>460) trails.splice(i,1);
   }
   const W=cv.clientWidth, H=cv.clientHeight;
-  if(W&&H) fallLines.forEach(l=>{ l.y+=l.sp*dt; if(l.y>H+l.len){ l.y=-l.len; l.x=Math.random()*W; } });
+  if(W&&H) motes.forEach(m=>{
+    m.y-=m.vy*dt; m.ph+=m.sp*dt;
+    m.x+=Math.sin(m.ph)*m.sway*dt;
+    if(m.y<-24){ m.y=H+24; m.x=Math.random()*W; }
+  });
   labelTimer+=dt;
   if(labelTimer>0.09){ labelTimer=0;
     tops.forEach((t,i)=>{
@@ -1014,16 +1079,29 @@ function render(now){
   if(!w||!h) return;
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.clearRect(0,0,w,h);
+  const t=now*0.001, K=ARENA_K, R=arena.R, tr=arena.topR;
   if(bgCanvas) ctx.drawImage(bgCanvas,0,0,w,h);
-  // 下落白色短线条（背景层）
-  ctx.lineWidth=1;
-  fallLines.forEach(l=>{
-    ctx.strokeStyle=`rgba(226,232,248,${l.a})`;
-    ctx.beginPath(); ctx.moveTo(l.x,l.y); ctx.lineTo(l.x,l.y+l.len); ctx.stroke();
+  // 地面旋转能量光弧（赛博环）
+  ctx.globalCompositeOperation='lighter';
+  for(let k=0;k<2;k++){
+    const rr=R*(1.14+k*0.20);
+    const a0=t*(0.18+k*0.11)*(k?-1:1);
+    ctx.strokeStyle= k? 'rgba(150,110,255,.16)':'rgba(70,220,235,.18)';
+    ctx.lineWidth= k?2:2.6;
+    ctx.beginPath(); ctx.ellipse(arena.cx,arena.cy,rr,rr*K,0,a0,a0+2.1); ctx.stroke();
+    ctx.strokeStyle= k?'rgba(190,160,255,.10)':'rgba(150,240,250,.12)';
+    ctx.lineWidth=5;
+    ctx.beginPath(); ctx.ellipse(arena.cx,arena.cy,rr,rr*K,0,a0+0.3,a0+1.4); ctx.stroke();
+  }
+  // 上升光尘
+  motes.forEach(m=>{
+    const s=m.s*(2.2+0.5*Math.sin(t*m.sp+m.ph));
+    ctx.globalAlpha=0.35+0.3*(0.5+0.5*Math.sin(t*m.sp*1.7+m.ph));
+    ctx.drawImage(moteSprites[m.c], m.x-s, m.y-s, s*2, s*2);
   });
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
   if(arenaCanvas) ctx.drawImage(arenaCanvas,0,0,w,h);
 
-  const t=now*0.001, K=ARENA_K, R=arena.R, tr=arena.topR;
   // 青环流光（沿椭圆）
   const Rc=R*0.952;
   ctx.lineCap='round';
@@ -1190,7 +1268,7 @@ function updateHistLine(){
   }
 }
 function boot(){
-  buildDOM(); resetRound(); layout(); buildCore();
+  buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites();
   logoImgs.forEach(im=>{
     const rebuild=()=>{ lastW=0; layout(); };
     im.addEventListener('load',rebuild); im.addEventListener('error',rebuild);
