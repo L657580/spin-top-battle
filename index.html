@@ -1311,20 +1311,41 @@ try{
   if(ms && typeof ms.idx==='number' && ms.idx>=0 && ms.idx<MUSIC.length){ musicState.idx=ms.idx; musicState.on=!!ms.on; }
 }catch(_){ }
 const musicAudio=new Audio(); musicAudio.loop=true; musicAudio.volume=0.55; musicAudio.preload='none';
-const musicDead=new Set(); let musicNoticeShown=false;
+const musicDead=new Set(); let musicProbeDone=false;
+
+function hideMusicUI(){
+  const p=$('#music-picker'), b=$('#btn-music');
+  if(p) p.style.display='none';
+  if(b) b.style.display='none';
+}
+function probeMusic(order){
+  if(musicProbeDone) return;
+  if(!order.length){ musicProbeDone=true; if(musicDead.size>=MUSIC.length) hideMusicUI(); return; }
+  const i=order[0];
+  const probe=new Audio();
+  let settled=false;
+  const done=(ok)=>{ if(settled) return; settled=true;
+    if(!ok) musicDead.add(i);
+    probeMusic(order.slice(1));
+  };
+  probe.preload='metadata';
+  probe.addEventListener('loadedmetadata',()=>done(true),{once:true});
+  probe.addEventListener('error',()=>done(false),{once:true});
+  probe.src=MUSIC[i].f;
+}
 
 function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
 function muIsPlaying(){ return musicState.on && !musicAudio.paused && !musicAudio.ended; }
 function muRender(){
   const m=MUSIC[musicState.idx], tEl=$('#mu-title'), playing=muIsPlaying();
-  tEl.textContent=(musicDead.has(musicState.idx)?'[文件缺失] ':'')+m.t;
-  tEl.classList.toggle('dead', musicDead.has(musicState.idx));
+  tEl.textContent=m.t;
   $('#mu-toggle').textContent = playing ? '❚❚' : '▶';
   $('#mu-toggle').classList.toggle('on', playing);
   $('#btn-music').classList.toggle('on', playing);
 }
 function muLoad(i){ musicAudio.src = MUSIC[i].f; }
 function muPlay(){
+  if(musicDead.size>=MUSIC.length) return;
   musicState.on=true; muSave();
   if(!musicAudio.src || musicAudio.src.indexOf(MUSIC[musicState.idx].f)<0) muLoad(musicState.idx);
   const p=musicAudio.play();
@@ -1342,18 +1363,14 @@ function muSwitch(d){
 }
 musicAudio.addEventListener('error',()=>{
   musicDead.add(musicState.idx); muRender();
-  if(musicDead.size>=MUSIC.length){
-    $('#mu-title').textContent='未找到音乐文件';
-    if(!musicNoticeShown){ musicNoticeShown=true; toast('音乐文件未随网页发布，仅本地版提供'); }
-    return;
-  }
+  if(musicDead.size>=MUSIC.length){ hideMusicUI(); return; }
   muSwitch(1);
 });
 musicAudio.addEventListener('playing',muRender);
 musicAudio.addEventListener('pause',muRender);
 
 /* ================= 按钮 ================= */
-$('#btn-start').addEventListener('click',()=>{ if(state==='ready'){ startWhipping(); if(musicState.on) muPlay(); } });
+$('#btn-start').addEventListener('click',()=>{ if(state==='ready'){ startWhipping(); if(musicState.on && musicDead.size<MUSIC.length) muPlay(); } });
 $('#btn-again').addEventListener('click',()=>{ resetRound(); startWhipping('新的一局，抽起来！'); });
 function goHome(){
   clearTimeout(settleTimer);
@@ -1386,6 +1403,9 @@ function updateHistLine(){
 }
 function boot(){
   buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites(); muRender();
+  const muOrder=[musicState.idx];
+  for(let k=1;k<MUSIC.length;k++) muOrder.push((musicState.idx+k)%MUSIC.length);
+  probeMusic(muOrder);
   logoImgs.forEach(im=>{
     const rebuild=()=>{ lastW=0; layout(); };
     im.addEventListener('load',rebuild); im.addEventListener('error',rebuild);
