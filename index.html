@@ -1490,7 +1490,7 @@ function muLoad(i, tryIdx){
   musicAudio.src=MUSIC[i].urls[musicTry];
   armLoadWatchdog();
 }
-/* 播放中源失效（如手机访问公网时本地源 404）：自动切下一可用源，全部失败则标记 dead */
+/* 播放中源失效（如手机访问公网时本地源 404）：自动切下一可用源 */
 let musicLoadTimer=null;
 function musicNextSrc(){
   const m=MUSIC[musicCur];
@@ -1498,7 +1498,14 @@ function musicNextSrc(){
   musicTry++;
   if(musicTry>=m.urls.length){
     musicDead.add(musicCur);
-    if(musicState.on){ muPause(); }
+    if(musicState.on){
+      // 自动切下一首可用歌，保持音乐不断；全部歌都不可用才停
+      for(let k=1;k<=MUSIC.length;k++){
+        const n=(musicCur+k)%MUSIC.length;
+        if(!musicDead.has(n)){ musicState.idx=n; muSave(); muPlay(); return; }
+      }
+      muPause();
+    }
     muRender();
     return;
   }
@@ -1513,7 +1520,21 @@ function armLoadWatchdog(){
   clearTimeout(musicLoadTimer);
   musicLoadTimer=setTimeout(()=>{ if(musicState.on && musicAudio.paused) musicNextSrc(); }, 12000);
 }
-musicAudio.addEventListener('playing',()=>{ clearTimeout(musicLoadTimer); });
+/* 播放健康心跳：断流若不报 error（停在缓冲、无声），约 5 秒内也能检测到并自动换源重连 */
+let musicBeat=null, musicLastTime=-1, musicStall=0;
+function startMusicBeat(){
+  if(musicBeat) return;
+  musicBeat=setInterval(()=>{
+    if(!musicState.on || musicAudio.paused || !musicAudio.src){ musicLastTime=-1; musicStall=0; return; }
+    const t=musicAudio.currentTime;
+    if(musicLastTime>=0 && Math.abs(t-musicLastTime)<0.1){
+      if(++musicStall>=2){ musicStall=0; musicLastTime=-1; musicNextSrc(); }
+    }else musicStall=0;
+    musicLastTime=t;
+  }, 2500);
+}
+startMusicBeat();
+musicAudio.addEventListener('playing',()=>{ clearTimeout(musicLoadTimer); musicStall=0; });
 musicAudio.addEventListener('error', musicNextSrc);
 function muPlay(){
   if(musicDead.size>=MUSIC.length) return;
@@ -1619,6 +1640,9 @@ window.__game={
   reset:resetRound,
   start:()=>startWhipping(),
   settle:()=>showSettle(),
+  audio:()=>musicAudio,
+  simStall:()=>{ MUSIC[musicCur].urls=[MUSIC[musicCur].urls[0], 'music/song03.mp3']; },
+  simSongFail:()=>{ MUSIC[musicCur].urls=['http://127.0.0.1:9/x.mp3']; musicTry=0; musicNextSrc(); },
   simAllDead:()=>{ // 测试：把所有音源换成必败地址并重新探测，验证 UI 不消失
     MUSIC.forEach(m=>{ m.urls=['http://127.0.0.1:9/x.mp3']; });
     Object.keys(musicOkUrl).forEach(k=>delete musicOkUrl[k]);
