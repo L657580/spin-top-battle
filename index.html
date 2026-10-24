@@ -288,12 +288,10 @@
       <div class="so-logos" id="so-logos"></div>
       <div id="music-picker">
         <span class="mp-label">音乐</span>
-        <button class="mp-btn" id="mu-prev" aria-label="上一首">◀</button>
         <div id="mu-box">
           <div id="mu-title" role="button" aria-label="展开曲目列表">--<svg viewBox="0 0 24 24" class="mu-chev"><path d="M6 9l6 6 6-6"/></svg></div>
           <div id="mu-list"></div>
         </div>
-        <button class="mp-btn" id="mu-next" aria-label="下一首">▶</button>
         <button class="mp-btn" id="mu-toggle" aria-label="播放/暂停">▶</button>
       </div>
       <button id="btn-start">开 始</button>
@@ -1391,9 +1389,8 @@ function muBuildList(){
     d.className='mu-item'; d.dataset.i=i;
     d.innerHTML=`<span class="idx-num">${i+1}</span><span class="n">${m.t}</span>`;
     d.addEventListener('click',()=>{
-      if(i===musicState.idx){ muToggle(); return; }
-      musicState.idx=i; muSave(); muLoad(i,0);
-      if(musicState.on) muPlay(); else muRender();
+      if(i===musicState.idx && muIsPlaying()){ muPause(); muCollapse(); return; }
+      musicState.idx=i; muSave(); muPlay();
       muCollapse();
     });
     list.appendChild(d);
@@ -1404,17 +1401,8 @@ function muToggleList(e){
   if(e) e.stopPropagation();
   $('#mu-box').classList.toggle('open');
 }
-function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
-function muIsPlaying(){ return musicState.on && !musicAudio.paused && !musicAudio.ended; }
 function muPause(){ musicState.on=false; muSave(); musicAudio.pause(); muRender(); }
 function muToggle(){ muIsPlaying() ? muPause() : muPlay(); }
-function muSwitch(d){
-  if(musicDead.size>=MUSIC.length) return;
-  let n=musicState.idx;
-  for(let k=0;k<MUSIC.length;k++){ n=(n+d+MUSIC.length)%MUSIC.length; if(!musicDead.has(n)) break; }
-  musicState.idx=n; muSave(); muLoad(n, 0);
-  if(musicState.on) muPlay(); else muRender();
-}
 document.addEventListener('click',e=>{
   const box=$('#mu-box');
   if(box && box.classList.contains('open') && !box.contains(e.target)) muCollapse();
@@ -1445,8 +1433,6 @@ function goHome(){
 $('#btn-home').addEventListener('click',goHome);
 $('#btn-home2').addEventListener('click',goHome);
 $('#btn-music').addEventListener('click',muToggle);
-$('#mu-prev').addEventListener('click',()=>muSwitch(-1));
-$('#mu-next').addEventListener('click',()=>muSwitch(1));
 $('#mu-toggle').addEventListener('click',muToggle);
 $('#mu-title').addEventListener('click',muToggleList);
 $('#btn-help').addEventListener('click',()=>$('#modal-help').classList.remove('hidden'));
