@@ -1335,9 +1335,15 @@ const MUSIC=[
   {f:'music/song05.mp3', t:'英雄联盟 - 所向无前 (Take Over)'},
   {f:'music/song06.mp3', t:'英雄联盟、Against The Current - Legends Never Die'},
 ];
-const BGM_CDN='https://cdn.jsdelivr.net/gh/L657580/bgm-store@main/';
-const BGM_RAW='https://raw.githubusercontent.com/L657580/bgm-store/main/';
-MUSIC.forEach(m=>{ const n=m.f.split('/').pop(); m.urls=[m.f, BGM_CDN+n, BGM_RAW+n]; });
+const BGM_BASES=[
+  '',                                                       // 本地相对路径（局域网/本地版可用）
+  'https://cdn.jsdelivr.net/gh/L657580/bgm-store@main/',
+  'https://fastly.jsdelivr.net/gh/L657580/bgm-store@main/',
+  'https://testingcf.jsdelivr.net/gh/L657580/bgm-store@main/',
+  'https://gcore.jsdelivr.net/gh/L657580/bgm-store@main/',
+  'https://raw.githubusercontent.com/L657580/bgm-store/main/'
+];
+MUSIC.forEach(m=>{ const n=m.f.split('/').pop(); m.urls=[m.f].concat(BGM_BASES.slice(1).map(b=>b+n)); });
 let musicState={idx:0,on:false}, musicCur=-1, musicTry=0;
 try{
   const ms=JSON.parse(localStorage.getItem('tgtop_music_v1'));
@@ -1347,12 +1353,6 @@ const musicAudio=new Audio(); musicAudio.loop=true; musicAudio.volume=0.55; musi
 const musicDead=new Set(); let musicProbeDone=false;
 const musicOkUrl={}; // probeMusic 探测到的每首歌可用源序号
 
-function hideMusicUI(){
-  const p=$('#music-picker'), b=$('#btn-music');
-  if(p) p.style.display='none';
-  if(b) b.style.display='none';
-  const box=$('#mu-box'); if(box) box.classList.remove('open');
-}
 function probeMusic(){
   if(musicProbeDone) return;
   let pending=MUSIC.length;
@@ -1360,8 +1360,8 @@ function probeMusic(){
     if(!ok) musicDead.add(i);
     if(--pending>0) return;
     musicProbeDone=true;
-    if(musicDead.size>=MUSIC.length) hideMusicUI();
-    else muRender();
+    // 探测全部失败也不隐藏 UI：网络失败往往是暂时性的，保留入口让用户点选重试
+    muRender();
   };
   MUSIC.forEach((m,i)=>{
     let ti=0, settled=false, timer=null;
@@ -1413,7 +1413,7 @@ function muToggleList(e){
   if(e) e.stopPropagation();
   $('#mu-box').classList.toggle('open');
 }
-function muPause(){ musicState.on=false; muSave(); musicAudio.pause(); muRender(); }
+function muPause(){ musicState.on=false; muSave(); clearTimeout(musicLoadTimer); musicAudio.pause(); muRender(); }
 function muToggle(){ muIsPlaying() ? muPause() : muPlay(); }
 document.addEventListener('click',e=>{
   const box=$('#mu-box');
@@ -1425,9 +1425,11 @@ function muLoad(i, tryIdx){
   const start=(typeof musicOkUrl[i]==='number') ? musicOkUrl[i] : (tryIdx||0);
   musicTry=start;
   musicAudio.src=MUSIC[i].urls[musicTry];
+  armLoadWatchdog();
 }
 /* 播放中源失效（如手机访问公网时本地源 404）：自动切下一可用源，全部失败则标记 dead */
-musicAudio.addEventListener('error',()=>{
+let musicLoadTimer=null;
+function musicNextSrc(){
   const m=MUSIC[musicCur];
   if(!m || !musicAudio.src) return;
   musicTry++;
@@ -1438,10 +1440,18 @@ musicAudio.addEventListener('error',()=>{
     return;
   }
   const wasOn=musicState.on;
-  musicOkUrl[musicCur]=musicTry; // 换源成功后更新缓存，暂停/恢复不再回退到坏源
+  musicOkUrl[musicCur]=musicTry; // 记住换到的源，暂停/恢复不再回退到坏源
   musicAudio.src=m.urls[musicTry];
   if(wasOn) musicAudio.play().catch(()=>{ });
-});
+  armLoadWatchdog();
+}
+/* 手机网络下某些源会挂起不报错：12 秒内没真正出声就自动换下一源 */
+function armLoadWatchdog(){
+  clearTimeout(musicLoadTimer);
+  musicLoadTimer=setTimeout(()=>{ if(musicState.on && musicAudio.paused) musicNextSrc(); }, 12000);
+}
+musicAudio.addEventListener('playing',()=>{ clearTimeout(musicLoadTimer); });
+musicAudio.addEventListener('error', musicNextSrc);
 function muPlay(){
   if(musicDead.size>=MUSIC.length) return;
   musicState.on=true; muSave();
@@ -1449,6 +1459,7 @@ function muPlay(){
   if(musicCur!==musicState.idx || musicTry!==want || !musicAudio.src) muLoad(musicState.idx, 0);
   const p=musicAudio.play();
   if(p && p.catch) p.catch(()=>{ });
+  armLoadWatchdog();
   muRender();
 }
 
@@ -1536,6 +1547,12 @@ window.__game={
   reset:resetRound,
   start:()=>startWhipping(),
   settle:()=>showSettle(),
+  simAllDead:()=>{ // 测试：把所有音源换成必败地址并重新探测，验证 UI 不消失
+    MUSIC.forEach(m=>{ m.urls=['http://127.0.0.1:9/x.mp3']; });
+    Object.keys(musicOkUrl).forEach(k=>delete musicOkUrl[k]);
+    musicDead.clear(); musicProbeDone=false;
+    probeMusic();
+  },
   stats:()=>{ try{return JSON.parse(localStorage.getItem('tgtop_stats_v1'))}catch(_){return null} },
   clearStats:()=>{ try{localStorage.removeItem('tgtop_stats_v1')}catch(_){} },
 };
