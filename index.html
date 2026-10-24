@@ -153,6 +153,35 @@
   #mu-title.dead{color:#6f7689}
   .mp-btn.on{color:var(--gold-2);border-color:rgba(245,196,83,.6)}
   #btn-music.on{color:var(--gold-2);border-color:rgba(245,196,83,.6)}
+  /* 曲目下拉列表 */
+  #mu-box{position:relative;flex:1 1 auto;min-width:0}
+  #mu-title{
+    display:flex;align-items:center;gap:6px;font-size:12px;color:#d6dbe8;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);
+    border-radius:8px;padding:6px 10px;cursor:pointer;user-select:none;transition:.15s;
+  }
+  #mu-title:hover{border-color:rgba(245,196,83,.5)}
+  #mu-title .t{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .mu-chev{width:12px;height:12px;flex:0 0 auto;fill:none;stroke:#9aa1b4;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+  #mu-box.open .mu-chev{transform:rotate(180deg)}
+  #mu-list{
+    position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:50;
+    background:rgba(10,12,19,.97);border:1px solid rgba(255,255,255,.18);border-radius:10px;
+    box-shadow:0 12px 32px rgba(0,0,0,.6);overflow:hidden;
+    max-height:0;opacity:0;pointer-events:none;transition:max-height .22s ease, opacity .18s ease;
+  }
+  #mu-box.open #mu-list{max-height:230px;opacity:1;pointer-events:auto;overflow-y:auto}
+  .mu-item{
+    display:flex;align-items:center;gap:8px;padding:9px 10px;font-size:12px;color:#c4cad9;
+    cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);transition:.12s;
+  }
+  .mu-item:last-child{border-bottom:none}
+  .mu-item:hover{background:rgba(255,255,255,.07);color:#fff}
+  .mu-item.cur{color:var(--gold-2);background:rgba(245,196,83,.08)}
+  .mu-item.cur::before{content:'♪';font-size:11px;flex:0 0 auto}
+  .mu-item:not(.cur)::before{content:'';width:11px;flex:0 0 auto}
+  .mu-item .n{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .mu-item .idx-num{font-size:10px;color:#6f7689;flex:0 0 auto}
 
   /* ===== 右下统计面板 ===== */
   #stats-panel{
@@ -260,7 +289,10 @@
       <div id="music-picker">
         <span class="mp-label">音乐</span>
         <button class="mp-btn" id="mu-prev" aria-label="上一首">◀</button>
-        <div id="mu-title">--</div>
+        <div id="mu-box">
+          <div id="mu-title" role="button" aria-label="展开曲目列表">--<svg viewBox="0 0 24 24" class="mu-chev"><path d="M6 9l6 6 6-6"/></svg></div>
+          <div id="mu-list"></div>
+        </div>
         <button class="mp-btn" id="mu-next" aria-label="下一首">▶</button>
         <button class="mp-btn" id="mu-toggle" aria-label="播放/暂停">▶</button>
       </div>
@@ -1320,6 +1352,7 @@ function hideMusicUI(){
   const p=$('#music-picker'), b=$('#btn-music');
   if(p) p.style.display='none';
   if(b) b.style.display='none';
+  const box=$('#mu-box'); if(box) box.classList.remove('open');
 }
 function probeMusic(order){
   if(musicProbeDone) return;
@@ -1340,12 +1373,52 @@ function probeMusic(order){
 function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
 function muIsPlaying(){ return musicState.on && !musicAudio.paused && !musicAudio.ended; }
 function muRender(){
-  const m=MUSIC[musicState.idx], tEl=$('#mu-title'), playing=muIsPlaying();
-  tEl.textContent=m.t;
+  const m=MUSIC[musicState.idx], playing=muIsPlaying();
+  const t=$('#mu-title .t');
+  if(t) t.textContent=m.t;
   $('#mu-toggle').textContent = playing ? '❚❚' : '▶';
   $('#mu-toggle').classList.toggle('on', playing);
   $('#btn-music').classList.toggle('on', playing);
+  document.querySelectorAll('.mu-item').forEach(el=>{
+    el.classList.toggle('cur', +el.dataset.i===musicState.idx);
+  });
 }
+function muBuildList(){
+  const list=$('#mu-list');
+  if(!list || list.childElementCount) return;
+  MUSIC.forEach((m,i)=>{
+    const d=document.createElement('div');
+    d.className='mu-item'; d.dataset.i=i;
+    d.innerHTML=`<span class="idx-num">${i+1}</span><span class="n">${m.t}</span>`;
+    d.addEventListener('click',()=>{
+      if(i===musicState.idx){ muToggle(); return; }
+      musicState.idx=i; muSave(); muLoad(i,0);
+      if(musicState.on) muPlay(); else muRender();
+      muCollapse();
+    });
+    list.appendChild(d);
+  });
+}
+function muCollapse(){ $('#mu-box').classList.remove('open'); }
+function muToggleList(e){
+  if(e) e.stopPropagation();
+  $('#mu-box').classList.toggle('open');
+}
+function muSave(){ try{ localStorage.setItem('tgtop_music_v1', JSON.stringify(musicState)); }catch(_){ } }
+function muIsPlaying(){ return musicState.on && !musicAudio.paused && !musicAudio.ended; }
+function muPause(){ musicState.on=false; muSave(); musicAudio.pause(); muRender(); }
+function muToggle(){ muIsPlaying() ? muPause() : muPlay(); }
+function muSwitch(d){
+  if(musicDead.size>=MUSIC.length) return;
+  let n=musicState.idx;
+  for(let k=0;k<MUSIC.length;k++){ n=(n+d+MUSIC.length)%MUSIC.length; if(!musicDead.has(n)) break; }
+  musicState.idx=n; muSave(); muLoad(n, 0);
+  if(musicState.on) muPlay(); else muRender();
+}
+document.addEventListener('click',e=>{
+  const box=$('#mu-box');
+  if(box && box.classList.contains('open') && !box.contains(e.target)) muCollapse();
+});
 function muLoad(i, tryIdx){
   musicCur=i; musicTry=tryIdx||0;
   musicAudio.src=MUSIC[i].urls[musicTry];
@@ -1358,30 +1431,6 @@ function muPlay(){
   if(p && p.catch) p.catch(()=>{ });
   muRender();
 }
-function muPause(){ musicState.on=false; muSave(); musicAudio.pause(); muRender(); }
-function muToggle(){ muIsPlaying() ? muPause() : muPlay(); }
-function muSwitch(d){
-  if(musicDead.size>=MUSIC.length) return;
-  let n=musicState.idx;
-  for(let k=0;k<MUSIC.length;k++){ n=(n+d+MUSIC.length)%MUSIC.length; if(!musicDead.has(n)) break; }
-  musicState.idx=n; muSave(); muLoad(n, 0);
-  if(musicState.on) muPlay(); else muRender();
-}
-musicAudio.addEventListener('error',()=>{
-  if(musicCur<0) return;
-  const m=MUSIC[musicCur];
-  if(musicTry < m.urls.length-1){
-    musicTry++;                                     // 本地失败 → CDN → raw 逐级兜底
-    musicAudio.src=m.urls[musicTry];
-    if(musicState.on){ const p=musicAudio.play(); if(p&&p.catch)p.catch(()=>{ }); }
-    return;
-  }
-  musicDead.add(musicCur); muRender();
-  if(musicDead.size>=MUSIC.length){ hideMusicUI(); return; }
-  muSwitch(1);
-});
-musicAudio.addEventListener('playing',muRender);
-musicAudio.addEventListener('pause',muRender);
 
 /* ================= 按钮 ================= */
 $('#btn-start').addEventListener('click',()=>{ if(state==='ready'){ startWhipping(); if(musicState.on && musicDead.size<MUSIC.length) muPlay(); } });
@@ -1399,6 +1448,7 @@ $('#btn-music').addEventListener('click',muToggle);
 $('#mu-prev').addEventListener('click',()=>muSwitch(-1));
 $('#mu-next').addEventListener('click',()=>muSwitch(1));
 $('#mu-toggle').addEventListener('click',muToggle);
+$('#mu-title').addEventListener('click',muToggleList);
 $('#btn-help').addEventListener('click',()=>$('#modal-help').classList.remove('hidden'));
 $('#btn-help-close').addEventListener('click',()=>$('#modal-help').classList.add('hidden'));
 $('#modal-help').addEventListener('click',e=>{ if(e.target.id==='modal-help') $('#modal-help').classList.add('hidden'); });
@@ -1416,7 +1466,8 @@ function updateHistLine(){
   }
 }
 function boot(){
-  buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites(); muRender();
+  buildDOM(); resetRound(); layout(); buildCore(); buildMoteSprites();
+  muBuildList(); muRender();
   const muOrder=[musicState.idx];
   for(let k=1;k<MUSIC.length;k++) muOrder.push((musicState.idx+k)%MUSIC.length);
   probeMusic(muOrder);
